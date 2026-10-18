@@ -1,0 +1,122 @@
+name: relay-guard
+
+# 兜底保障：relay（run.yml）每天必须完整跑成功一次。
+# GitHub 定时任务只会"延迟"（实测 0.5~7.7h），但偶发被跳过或失败；
+# 本工作流每天 UTC 23:30（北京 07:30）检查最近 28 小时内的 relay 运行情况：
+#   在跑 / 全部成功        → 什么都不做
+#   部分片失败(failure)    → rerun-failed-jobs 只补失败的片（已成功的片不重复跑，避免播放/签到/笔记翻倍）
+#   完全没有 relay 记录    → dispatch 补发一次整班
+#
+# 历史教训（2026-10-13 修复）：
+# 1. 原版本按"当天 UTC 日期"过滤 run，但 relay 计划在 UTC 14:23，被 GitHub 延迟到
+#    22:00+ UTC 才创建是常态（实测最晚 22:09 UTC）。若 guard 在 21:30 UTC 检查，
+#    当晚的 relay 还没被创建 → 误判"今天没跑"→ 补发 → 一晚双跑、播放翻倍。
+#    故 guard 改到 UTC 23:30（晚于实测最晚创建时间），并改用滚动窗口。
+# 2. Actions list-runs 的 created 日期过滤参数实测不可靠（会返回未过滤结果），
+#    因此这里拉最近 30 条在本地按 created_at 时间戳过滤，不依赖服务端过滤。
+# 3. 滚动窗口取 28h：relay 约 24h 一班，窗口 > 24h+最大延迟(约9h)可容忍延迟不误补，
+#    同时真丢一整天（上次成功已在约 33h 前）时能补上。
+# 4. 原逻辑"窗口内有 success 就不补"漏掉了"部分片失败"的场景：5 片挂 2 片时 run
+#    结论是 failure，但 guard 看到窗口内有 success 的片就不动作，失败片的号当天
+#    无播放无签到无笔记。现改为：取窗口内最近一条 relay run——
+#      在跑/成功 → 不动；failure → rerun-failed-jobs 只补失败片；无记录 → dispatch。
+
+on:
+  schedule:
+    - cron: '30 23 * * *'     # UTC 23:30 ≈ 北京 07:30
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    steps:
+      - name: check & repair relay if incomplete
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 - <<'EOF'
+          import json, os, urllib.request
+          from datetime import datetime, timezone, timedelta
+
+          TOK = os.environ["GH_TOKEN"]
+          REPO = os.environ["GITHUB_REPOSITORY"]
+          H = {"Authorization": "Bearer " + TOK,
+               "Accept": "application/vnd.github+json",
+               "User-Agent": "relay-guard"}
+
+          WINDOW_HOURS = 28
+
+          def get(url):
+              return json.load(urllib.request.urlopen(urllib.request.Request(url, headers=H), timeout=30))
+
+          def post(url):
+              req = urllib.request.Request(url, data=b'{"ref":"main"}',
+                                           headers={**H, "Content-Type": "application/json"},
+                                           method="POST")
+              return urllib.request.urlopen(req, timeout=30).status
+
+          def parse_ts(s):
+              return datetime.strptime(s, "%Y-%m-%dT%H:%M:%SZ").replace(tzinfo=timezone.utc)
+
+          now = datetime.now(timezone.utc)
+          window_start = now - timedelta(hours=WINDOW_HOURS)
+          # 拉最近 30 条（relay 每天至多 1-2 条，30 条覆盖两周以上），本地按时间戳过滤
+          d = get(f"https://api.github.com/repos/{REPO}/actions/runs?per_page=30")
+          recent = []
+          for r in d.get("workflow_runs", []):
+              if r.get("path") != ".github/workflows/run.yml":
+                  continue
+              try:
+                  created = parse_ts(r.get("created_at", ""))
+              except Exception:
+                  continue
+              if created >= window_start:
+                  recent.append((created, r))
+          recent.sort(key=lambda x: x[0])
+
+          if not recent:
+              print(f"窗口 {WINDOW_HOURS}h 内无 relay 记录，dispatch 补发整班")
+              print("dispatch HTTP", post(f"https://api.github.com/repos/{REPO}/actions/workflows/run.yml/dispatches"))
+              raise SystemExit(0)
+
+          _, latest = recent[-1]
+          print(f"窗口 {WINDOW_HOURS}h 内 relay 记录 {len(recent)} 条，最近一条 run {latest['id']} "
+                f"created={latest['created_at']} status={latest.get('status')} "
+                f"conclusion={latest.get('conclusion')}")
+
+          if latest.get("status") in ("queued", "in_progress", "waiting", "pending"):
+              print("最近 relay 正在运行，无需动作")
+          elif latest.get("conclusion") == "success":
+              print("最近 relay 全部成功，无需动作")
+          else:
+              # failure/cancelled 等：先判断这个失败 run 用的是否为最新代码
+              # 2026-10-17 案例：relay#9 用旧码 fce6ac8 失败，guard rerun-failed-jobs 会
+              # 强制 checkout 原 head_sha(仍是旧码)，导致同一故障二次失败、再发一封失败邮件。
+              # 故：失败 run 的 head_sha 落后于 main HEAD → 跳过补跑，等下一班 relay 用最新码跑。
+              run_head = latest.get("head_sha")
+              main_head = None
+              try:
+                  main_head = get(f"https://api.github.com/repos/{REPO}/commits/main").get("sha")
+              except Exception as e:
+                  # 拿不到 main HEAD 时不擅自跳过，保守按原逻辑补跑
+                  print("获取 main HEAD 失败，保守按原逻辑补跑:", str(e)[:120])
+              if run_head and main_head and run_head != main_head:
+                  print(f"失败 run {latest['id']} 用的是旧代码 {run_head[:7]}，main 已更新到 "
+                        f"{main_head[:7]}；跳过 rerun，等下一班 relay 用最新码运行"
+                        f"（避免用旧 commit 重复失败、重复触发失败告警邮件）")
+              else:
+                  # 跑的就是最新码仍失败(或取不到 main HEAD 无法比较)：只补失败片，已成功的片不重跑
+                  # （rerun-failed-jobs 对 cancelled 的 run 同样有效，会重跑未成功的 job）
+                  print("失败 run 使用的即最新代码(或无法比较)，尝试 rerun-failed-jobs 只补失败片")
+                  try:
+                      code = post(f"https://api.github.com/repos/{REPO}/actions/runs/{latest['id']}/rerun-failed-jobs")
+                      print("rerun-failed-jobs HTTP", code)
+                  except Exception as e:
+                      # 没有可重跑的 job 或接口异常时，退回整班 dispatch
+                      print("rerun-failed-jobs 失败，退回整班 dispatch:", str(e)[:150])
+                      print("dispatch HTTP", post(f"https://api.github.com/repos/{REPO}/actions/workflows/run.yml/dispatches"))
+          EOF
