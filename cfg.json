@@ -1,0 +1,7 @@
+{
+  "plays_per_account": 28,
+  "skip_prob": 0.08,
+  "mixed_plays_min": 6,
+  "mixed_plays_max": 10,
+  "note": "运行参数。plays_per_account = 每个账号每天听几首别人的歌（绝不听自己的）。mixed_plays_min/max = 每个账号每天额外混听几首热歌榜的群外歌曲（0 为关闭），用于冲淡只听圈内歌曲的特征。"
+}
