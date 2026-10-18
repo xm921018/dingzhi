@@ -1613,8 +1613,8 @@ async function mergePool() {
 }
 
 async function addEntry(entry) {
-  // 有效期默认 2 年（730 天），管理端可随时修改（exp=YYYY-MM-DD，forever=永久）
-  if (!entry.exp) entry.exp = beijingDatePlus(730);
+  // 有效期默认永久（定制版），管理端可随时修改（exp=YYYY-MM-DD，forever=永久）
+  if (!entry.exp) entry.exp = 'forever';
   // 查重：先查该账号自己的独立键（单键读，无竞态），再查合并后的主表
   const ekey = entryKeyOf(entry);
   if (await POOL.get(ekey)) {
@@ -1805,7 +1805,7 @@ async function handle(request) {
       const song = await resolveSong(body.link);
       if (!song.ok) return json({ message: song.msg }, 400);
       const expQ = parseExpInput(body.exp);
-      if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或不填（默认2年）' }, 400);
+      if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或"永久"（不填=永久）' }, 400);
       const r = await addEntry({ ck: 'MUSIC_U=' + login.musicU, song: song.song, added: beijingDate(), name: body.phone, uid: login.uid, email: email, grp: isG2 ? 2 : 1, exp: expQ.exp });
       if (!r.ok) return json({ message: r.msg }, 400);
       return json({ message: '登记成功，次日生效。' });
@@ -1831,7 +1831,7 @@ async function handle(request) {
       const song = await resolveSong(body.link);
       if (!song.ok) return json({ message: song.msg }, 400);
       const expQ = parseExpInput(body.exp);
-      if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或不填（默认2年）' }, 400);
+      if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或"永久"（不填=永久）' }, 400);
       const phoneRaw = (body.phone || '').replace(/[^0-9]/g, '');
       const phone = /^1\d{10}$/.test(phoneRaw) ? phoneRaw : '';
       const r = await addEntry({ ck: 'MUSIC_U=' + mu, song: song.song, added: beijingDate(), name: phone || ('manual:' + v.uid), uid: v.uid, email: email, phone: phone, grp: isG2 ? 2 : 1, exp: expQ.exp });
