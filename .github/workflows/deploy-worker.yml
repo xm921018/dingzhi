@@ -1,0 +1,34 @@
+name: deploy-worker
+
+# 自动部署 Cloudflare Worker：只要 push 到 main 且改动了 worker/ 目录（或本工作流自身），
+# 就用 CF API 把 worker/worker.js 上传上线，无需再手动部署。
+# 部署采用 service worker 格式（addEventListener），必须用 script 字段名上传，
+# 否则 Cloudflare 报 no registered event handlers。
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'worker/**'
+      - '.github/workflows/deploy-worker.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: deploy worker to cloudflare
+        env:
+          CF_API_TOKEN: ${{ secrets.CF_API_TOKEN }}
+          CF_ACCOUNT_ID: c60450bfb7f2c2becfd744ba2508a4f2
+        run: |
+          printf '%s' '{"body_part":"script","bindings":[{"name":"POOL","type":"kv_namespace","namespace_id":"8251dadecfe64bba89f8d2e639d322e1"},{"name":"GH_OWNER","type":"plain_text","text":"xm921018"},{"name":"GH_REPO","type":"plain_text","text":"dingzhi"}]}' > /tmp/worker_meta.json
+          curl -sS -X PUT \
+            -H "Authorization: Bearer $CF_API_TOKEN" \
+            -F "metadata=@/tmp/worker_meta.json;type=application/json" \
+            -F "script=@worker/worker.js;type=application/javascript" \
+            "https://api.cloudflare.com/client/v4/accounts/$CF_ACCOUNT_ID/workers/scripts/dingzhi" \
+            | python3 -c "import sys,json; d=json.load(sys.stdin); print('DEPLOY_OK' if d.get('success') else ('DEPLOY_FAIL '+json.dumps(d))); print('modified_on', (d.get('result') or {}).get('modified_on'))"
