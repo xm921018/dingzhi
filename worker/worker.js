@@ -1513,6 +1513,14 @@ function isSoonExpired(e) {
 function beijingDatePlus(n) {
   return new Date(Date.now() + 8 * 3600 * 1000 + n * 86400 * 1000).toISOString().slice(0, 10);
 }
+function parseExpInput(x) {
+  if (x == null || String(x).trim() === '') return { ok: true };
+  const s = String(x).trim();
+  if (s === 'forever' || s === '永久') return { ok: true, exp: 'forever' };
+  if (/^\d{4}-\d{2}-\d{2}$/.test(s)) return { ok: true, exp: s };
+  if (/^\d{1,4}$/.test(s)) return { ok: true, exp: beijingDatePlus(parseInt(s, 10)) };
+  return { ok: false };
+}
 // 到期账号清理：删独立键 + 记墓碑 + 刷 master + 回推 GitHub Secrets（只在有过期时才写）
 async function pruneExpired() {
   const master = await mergePool();
@@ -1796,7 +1804,9 @@ async function handle(request) {
       if (!login.ok) return json({ message: login.msg }, 400);
       const song = await resolveSong(body.link);
       if (!song.ok) return json({ message: song.msg }, 400);
-      const r = await addEntry({ ck: 'MUSIC_U=' + login.musicU, song: song.song, added: beijingDate(), name: body.phone, uid: login.uid, email: email, grp: isG2 ? 2 : 1 });
+      const expQ = parseExpInput(body.exp);
+      if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或不填（默认2年）' }, 400);
+      const r = await addEntry({ ck: 'MUSIC_U=' + login.musicU, song: song.song, added: beijingDate(), name: body.phone, uid: login.uid, email: email, grp: isG2 ? 2 : 1, exp: expQ.exp });
       if (!r.ok) return json({ message: r.msg }, 400);
       return json({ message: '登记成功，次日生效。' });
     }
@@ -1820,7 +1830,9 @@ async function handle(request) {
       if (!v.ok) return json({ message: v.msg }, 400);
       const song = await resolveSong(body.link);
       if (!song.ok) return json({ message: song.msg }, 400);
-      const r = await addEntry({ ck: 'MUSIC_U=' + mu, song: song.song, added: beijingDate(), name: 'manual:' + v.uid, uid: v.uid, email: email, grp: isG2 ? 2 : 1 });
+      const expQ = parseExpInput(body.exp);
+      if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或不填（默认2年）' }, 400);
+      const r = await addEntry({ ck: 'MUSIC_U=' + mu, song: song.song, added: beijingDate(), name: 'manual:' + v.uid, uid: v.uid, email: email, grp: isG2 ? 2 : 1, exp: expQ.exp });
       if (!r.ok) return json({ message: r.msg }, 400);
       let msg = '备用登记成功，次日生效。';
       if (v.provisional) msg += '（注：网易校验接口暂时不可达[' + (v.diag || '') + ']，已跳过在线校验；明天任务会自动复验）';
