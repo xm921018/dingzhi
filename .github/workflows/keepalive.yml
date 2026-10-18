@@ -1,0 +1,25 @@
+name: keepalive
+
+# 防呆：GitHub 会自动停用"连续 60 天无仓库活动"的定时工作流（public repo 规则）。
+# cron-relay 日常运行不产生提交，本工作流每周做一次空提交保持仓库活跃，
+# 确保 run.yml 的每日定时永不被 GitHub 停用。
+
+on:
+  schedule:
+    - cron: '17 3 * * 1'      # 每周一 UTC 03:17 ≈ 北京 11:17
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+jobs:
+  keepalive:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: empty commit to keep repo active
+        run: |
+          git config user.name "keepalive-bot"
+          git config user.email "actions@github.com"
+          git commit --allow-empty -m "chore: keepalive (keep scheduled workflows enabled)"
+          git push
