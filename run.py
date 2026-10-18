@@ -222,6 +222,11 @@ def main():
     # （实测延迟 4.5h），此时 UTC 日期比北京晚一天，曾导致全池被误判"当天新号"而白跑（2026-10-11 实锤）
     today = (datetime.utcnow() + timedelta(hours=8)).date().isoformat()
     active = [e for e in active if e.get("added", "") < today]
+    # 有效期（exp）到期剔除：'YYYY-MM-DD' 过了北京时间当天即不再参与；'forever'/缺省 = 永久
+    expired = [e for e in active if e.get("exp") and e.get("exp") != "forever" and str(e["exp"]) < today]
+    if expired:
+        active = [e for e in active if not (e.get("exp") and e.get("exp") != "forever" and str(e["exp"]) < today)]
+        print(f"[slice {slice_idx}] 另有 {len(expired)} 个账号已过有效期（exp），自动剔除")
     print(f"[slice {slice_idx}] 总数 {len(entries)} 存活 {len(active)} 失效 {dead} 网络异常 {unknown} 今日新号剔除后 {len(active)}")
 
     n = len(active)
