@@ -1,0 +1,98 @@
+name: relay
+
+on:
+  schedule:
+    - cron: '23 14 * * *'      # UTC 14:23 ≈ 北京 22:23，错峰
+  workflow_dispatch: {}
+
+jobs:
+  plan:
+    # 动态扩片：按号池实际人数算出需要的并行片数，人数涨片数自动涨，无需改代码
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      ns: ${{ steps.plan.outputs.ns }}
+    steps:
+      - name: plan slices
+        id: plan
+        env:
+          NB_POOL_1: ${{ secrets.NB_POOL_1 }}
+          NB_POOL_2: ${{ secrets.NB_POOL_2 }}
+          NB_POOL_3: ${{ secrets.NB_POOL_3 }}
+          NB_POOL_4: ${{ secrets.NB_POOL_4 }}
+          NB_POOL_5: ${{ secrets.NB_POOL_5 }}
+          MIN_SLICES: '4'
+          MAX_SLICES: '40'
+          ACCOUNTS_PER_SLICE: '6'   # 单号约 35-50 分钟（28 群内歌+6-10 热歌），6 个/片 ≈ 3.5-5h，留足 6h job 上限余量
+        run: |
+          python3 - <<'EOF'
+          import base64, json, os, math
+          n = 0
+          for i in range(1, 6):
+              raw = os.environ.get(f"NB_POOL_{i}")
+              if not raw:
+                  continue
+              try:
+                  chunk = json.loads(base64.b64decode(raw).decode("utf-8"))
+                  if isinstance(chunk, list):
+                      n += len(chunk)
+              except Exception:
+                  pass
+          per = int(os.environ.get("ACCOUNTS_PER_SLICE", "8"))
+          lo = int(os.environ.get("MIN_SLICES", "4"))
+          hi = int(os.environ.get("MAX_SLICES", "30"))
+          ns = max(lo, min(hi, math.ceil(n / per) if n else lo))
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"ns={ns}\n")
+              f.write(f"matrix={json.dumps({'slice': list(range(ns))})}\n")
+          print(f"pool_size={n} ns={ns}")
+          EOF
+
+  brush:
+    needs: plan
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    env:
+      NS: ${{ needs.plan.outputs.ns }}
+      SLICE: ${{ matrix.slice }}
+      NB_PASS: ${{ secrets.NB_PASS }}
+      NB_POOL_1: ${{ secrets.NB_POOL_1 }}
+      NB_POOL_2: ${{ secrets.NB_POOL_2 }}
+      NB_POOL_3: ${{ secrets.NB_POOL_3 }}
+      NB_POOL_4: ${{ secrets.NB_POOL_4 }}
+      NB_POOL_5: ${{ secrets.NB_POOL_5 }}
+      EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+      EMAIL_AUTH_CODE: ${{ secrets.EMAIL_AUTH_CODE }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - run: pip install -q pycryptodome requests pillow
+      - name: install CJK fonts (notes.py 笔记图片中文字体，2026-10-13 修复：runner 无中文字体时图片文字全是方块)
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y fonts-arphic-uming fonts-noto-cjk
+      - name: stagger start
+        run: sleep $((RANDOM % 240 + 60))   # 错开各片启动，避免同刻批量特征
+      - name: run slice
+        run: python run.py
+      - name: build accounts for signin/notes
+        run: python make_accounts.py
+      - name: daily signin
+        run: |
+          N=$(python -c "import json;print(len(json.load(open('accounts.json'))['accounts']))")
+          if [ "$N" -gt 0 ]; then python signin.py; else echo "本片无账号，跳过签到"; fi
+      - name: notes publish (per-account every 6 days)
+        run: |
+          N=$(python -c "import json;print(len(json.load(open('accounts.json'))['accounts']))")
+          if [ "$N" -gt 0 ]; then python notes.py; else echo "本片无账号，跳过笔记"; fi
+      - name: upload diag
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diag-slice-${{ matrix.slice }}
+          path: diag_logs/
+          if-no-files-found: ignore
