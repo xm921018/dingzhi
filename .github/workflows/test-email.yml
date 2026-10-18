@@ -1,0 +1,29 @@
+name: test-email
+
+# 手动触发：验证 GitHub runner（海外机房）→ smtp.qq.com:465 连通性 + 号主直邮通道。
+# 用途：配置/轮换 EMAIL_FROM 授权码后跑一次确认；也可填任意收件邮箱测试送达。
+on:
+  workflow_dispatch:
+    inputs:
+      to:
+        description: "收件邮箱（留空则发给发件箱自己）"
+        required: false
+        default: ""
+
+jobs:
+  smtp-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: send test email
+        env:
+          EMAIL_FROM: ${{ secrets.EMAIL_FROM }}
+          EMAIL_AUTH_CODE: ${{ secrets.EMAIL_AUTH_CODE }}
+        run: |
+          TO="${{ github.event.inputs.to }}"
+          if [ -z "$TO" ]; then TO="$EMAIL_FROM"; fi
+          echo "收件人: $TO"
+          python notify.py "$TO"
