@@ -1,0 +1,124 @@
+<!-- ============================================================
+     【警告】本文件是历史旧副本，已停止维护、请勿单独部署！
+     线上生效的登记页以 worker/worker.js 内嵌的 INDEX_HTML 为准
+     （deploy-worker.yml 部署的是 worker.js 的 script 字段）。
+     改动页面请改 worker.js 内的 INDEX_HTML，本文件不会被部署。
+     ============================================================ -->
+<!DOCTYPE html>
+<html lang="zh-CN" data-page-node-id="KvaqIaFY3BZGYDuEVrkDfF">
+<head data-page-node-id="gVnqLhWNwArV3gwmdG2mXX">
+<meta charset="utf-8" data-page-node-id="dJOellFfJynWgCZNiwA4wm">
+<meta name="viewport" content="width=device-width,initial-scale=1" data-page-node-id="SL1x3sjvgOU0mf3HLJXOsG">
+<title>成员接入</title>
+<style>
+  body{font-family:-apple-system,system-ui,"PingFang SC",sans-serif;background:#f5f6f8;margin:0;padding:24px 12px;display:flex;flex-direction:column;align-items:center;gap:16px}
+  .head{text-align:center;margin-bottom:2px}
+  .page-title{font-size:20px;font-weight:600;color:#3b6d11;margin:0}
+  .page-sub{font-size:13px;color:#666;margin:6px 0 0}
+  .wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;width:100%;max-width:740px}
+  .card{background:#fff;padding:26px 22px;border-radius:14px;width:330px;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.08)}
+  h1{font-size:17px;margin:0 0 4px}
+  h1.alt{color:#b06a00}
+  p{font-size:13px;color:#666;margin:0 0 16px;line-height:1.5}
+  label{display:block;font-size:13px;margin:12px 0 4px;color:#333}
+  input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px}
+  .row{display:flex;gap:8px}
+  .row input{flex:1}
+  button{margin-top:14px;width:100%;padding:11px;border:0;border-radius:8px;background:#3b6d11;color:#fff;font-size:15px;cursor:pointer}
+  button.mini{margin-top:0;width:auto;padding:10px 12px;font-size:13px;background:#5a8f1d;white-space:nowrap}
+  button:disabled{opacity:.55;cursor:default}
+  .msg{margin-top:14px;font-size:13px;min-height:18px;line-height:1.5}
+  .ok{color:#3b6d11}.err{color:#a32d2d}.tip{color:#666}
+  details{margin-top:14px;font-size:12px;color:#666;line-height:1.6}
+  summary{cursor:pointer;color:#3b6d11}
+  code{background:#eee;padding:1px 4px;border-radius:4px}
+</style>
+</head>
+<body data-page-node-id="3cyqlfWc7lWNrs64dHosXy">
+  <div class="head" data-page-node-id="EqLzTyKsOSLXap0Fvosltq">
+    <h1 class="page-title" data-page-node-id="UUu5sKdpK36Ny3Oo14OkEE">成员接入</h1>
+    <p class="page-sub" data-page-node-id="4ZFCX0VUqazGkxTGi2EHFt">选择一种方式登记：左侧手机登录，右侧备用手动</p>
+  </div>
+  <div class="wrap" data-page-node-id="L0lRhuEunDQ3xEHBtEJbpJ">
+    <!-- 主通道：手机登录 -->
+    <div class="card" data-page-node-id="Yktii8dTIe7IYnfvtGwX9l">
+      <h1 data-page-node-id="WA43UbMcjgaNXIlKzUmA8A">成员接入（方式一 · 手机登录）</h1>
+      <p data-page-node-id="m9ZbF9Lj5BudRvpMzouKQ9">① 填群口令 → ② 填手机号 → ③ 点「获取验证码」收短信 → ④ 填验证码和歌曲链接 → ⑤ 点登记。系统自动登录并登记，<b data-page-node-id="NFUg1AQyD0YnpyqNVP7gC8">次日生效</b>。</p>
+      <label data-page-node-id="4QPHrE4euxIoa2yBdvGpvA">手机号</label><input id="phone" inputmode="numeric" maxlength="11" placeholder="11 位手机号" data-page-node-id="nCLr2nnSBVbWAg972mFGEi">
+      <label data-page-node-id="IbptcjD3kYGLozHrQlZzl5">短信验证码</label>
+      <div class="row" data-page-node-id="Y29WAJdc1QOsL5D6PC6YQ5"><input id="code" inputmode="numeric" maxlength="6" placeholder="网易云短信验证码" data-page-node-id="oaJZKLhwjKZ1pSCk5tWTI9"><button id="send" class="mini" data-page-node-id="i7yi37ZgsXJ9El4wzOx0LT">获取验证码</button></div>
+      <label data-page-node-id="mMQVvu3HT6FlNffHIChVgp">分享链接</label><input id="link" placeholder="粘贴 APP 内分享的单曲链接" data-page-node-id="pNcSYJG3SAFAMXg5uDvH18">
+      <label data-page-node-id="fiGiqWZraBB7kDvw7AUPE4">群口令</label><input id="pass" type="password" placeholder="群内获取的群口令" data-page-node-id="5opA915hBXWwjABW2IhBuo">
+      <button id="btn" data-page-node-id="QbFE8fK5g4I6SFCHtMi43P">登录并登记</button>
+      <div class="msg tip" id="msg" data-page-node-id="J4FbAhAZedxDtqcFUBGJiq">提示：链接在网易云 APP 里「分享→复制链接」即可。</div>
+    </div>
+
+    <!-- 备用通道：手动粘 MUSIC_U（短信收不到 / 登录失败时用） -->
+    <div class="card" data-page-node-id="IlrIFq7S24q13aPJmYg8C3">
+      <h1 class="alt" data-page-node-id="awnWj1Ha2IeB0pLldSOgW6">成员接入（方式二 · 备用手动）</h1>
+      <p data-page-node-id="9RQH6Du7qDaL8bNC4IoNoO">手机短信收不到、或登录总失败时用本方式：自己从浏览器复制 <code data-page-node-id="qnFxCj7GUl3sElySpj15qS">MUSIC_U</code> 粘贴过来，同样<b data-page-node-id="wtOtk5rvpoo3HdXSHhUTNp">次日生效</b>。</p>
+      <label data-page-node-id="y5k22VmuQCqyf4TKNXTiOe">MUSIC_U</label><input id="mu" placeholder="粘贴浏览器里的 MUSIC_U 值" data-page-node-id="kvnBmsSeUJa1ZWkwbf3Qpn">
+      <label data-page-node-id="dgjFXDGTy0F1GRZMosl91A">分享链接</label><input id="link2" placeholder="粘贴 APP 内分享的单曲链接" data-page-node-id="iD1UM6jGPTBM51ryT44p2j">
+      <label data-page-node-id="qQNd9oRuXcbbjxCdl0M1fc">群口令</label><input id="pass2" type="password" placeholder="群内获取的群口令" data-page-node-id="qrrez2LIr3BeBvNiEc6B7T">
+      <button id="btn2" data-page-node-id="ORR56pNZ8xoSvfTpEGcsTE">备用登记</button>
+      <details data-page-node-id="IVCwf3zNgMlYp0Yud4D5fG">
+        <summary data-page-node-id="UL6Sy1lKhSXDqlaV7HuW1z">怎么拿到 MUSIC_U？（点开看）</summary>
+        用电脑浏览器打开 <code data-page-node-id="VL7Z6QmmeyGSD3cXlalC5Z">https://music.163.com</code> 并登录 → 按 <code data-page-node-id="sXhHIz48g96VJ22ZxyXU06">F12</code> → 切到「Application / 应用」标签 → 左侧展开 <code data-page-node-id="LSuV4kPB2rEbKBHFDiBleV">Cookies</code> → 选 <code data-page-node-id="EFI4jPYSPFfjXZbRs7WL8N">music.163.com</code> → 在右边找到名为 <code data-page-node-id="Ic28TB6b0zaG59cAX5pzG1">MUSIC_U</code> 的那一行，复制它的「Value / 值」整串粘进来即可。
+      </details>
+      <div class="msg tip" id="msg2" data-page-node-id="GQMVrj3FHmYkkRsfBwS6ll"></div>
+    </div>
+  </div>
+<script>
+  const $ = id => document.getElementById(id);
+  function setMsg(el, t, cls){ const m=$(el); m.textContent=t; m.className='msg'+(cls?(' '+cls):''); }
+  let timer=null;
+  $('send').onclick = async () => {
+    const phone=$('phone').value.trim();
+    const pass=$('pass').value.trim();
+    if(!/^1\d{10}$/.test(phone)){ setMsg('msg','请先填写正确的 11 位手机号','err'); return; }
+    // 2026-10-13：sendcode 接口加了群口令校验，前端先拦一道，没填口令直接提示
+    if(!pass){ setMsg('msg','请先填写群口令（群内获取）','err'); return; }
+    $('send').disabled=true; setMsg('msg','正在发送验证码…');
+    try{
+      const r=await fetch('/api/sendcode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,pass})});
+      const d=await r.json();
+      if(r.ok){ setMsg('msg','验证码已发送，请查收短信','ok'); startCd(); }
+      else{ setMsg('msg',d.message||'发送失败，请重试','err'); $('send').disabled=false; }
+    }catch(e){ setMsg('msg','网络错误，请重试','err'); $('send').disabled=false; }
+  };
+  function startCd(){
+    let cd=60; $('send').textContent=cd+'s';
+    timer=setInterval(()=>{ cd--; if(cd<=0){ clearInterval(timer); timer=null; $('send').textContent='获取验证码'; $('send').disabled=false; }
+      else { $('send').textContent=cd+'s'; } },1000);
+  }
+  $('btn').onclick = async () => {
+    const phone=$('phone').value.trim(), code=$('code').value.trim(),
+          link=$('link').value.trim(), pass=$('pass').value.trim();
+    if(!/^1\d{10}$/.test(phone)){ setMsg('msg','手机号格式不对','err'); return; }
+    if(!/^\d{4,6}$/.test(code)){ setMsg('msg','请填写验证码','err'); return; }
+    if(!link){ setMsg('msg','请填写歌曲链接','err'); return; }
+    setMsg('msg','处理中…'); $('btn').disabled=true;
+    try{
+      const r=await fetch('/api/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,code,link,pass})});
+      const d=await r.json();
+      if(r.ok){setMsg('msg',d.message||'登记成功，次日开始。','ok');}
+      else{setMsg('msg',d.message||'失败','err');}
+    }catch(e){setMsg('msg','网络错误','err');}
+    $('btn').disabled=false;
+  };
+  $('btn2').onclick = async () => {
+    const musicU=$('mu').value.trim(), link=$('link2').value.trim(), pass=$('pass2').value.trim();
+    if(!musicU){ setMsg('msg2','请填写 MUSIC_U','err'); return; }
+    if(!link){ setMsg('msg2','请填写歌曲链接','err'); return; }
+    setMsg('msg2','处理中…'); $('btn2').disabled=true;
+    try{
+      const r=await fetch('/api/join_manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({musicU,link,pass})});
+      const d=await r.json();
+      if(r.ok){setMsg('msg2',d.message||'备用登记成功，次日开始。','ok');}
+      else{setMsg('msg2',d.message||'失败','err');}
+    }catch(e){setMsg('msg2','网络错误','err');}
+    $('btn2').disabled=false;
+  };
+</script>
+</body>
+</html>
