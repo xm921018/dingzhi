@@ -1,0 +1,20 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "dingzhi",
+  "main": "worker/worker.js",
+  "compatibility_date": "2026-10-06",
+  "workers_dev": true,
+  "observability": {
+    "enabled": true
+  },
+  "kv_namespaces": [
+    {
+      "binding": "POOL",
+      "id": "8251dadecfe64bba89f8d2e639d322e1"
+    }
+  ],
+  "vars": {
+    "GH_OWNER": "xm921018",
+    "GH_REPO": "dingzhi"
+  }
+}
