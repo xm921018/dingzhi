@@ -1498,6 +1498,37 @@ async function ghPutSecret(name, value) {
 function beijingDate() {
   return new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
 }
+// ---- 有效期（exp）：'YYYY-MM-DD' 到期即移除；无 exp / 'forever' = 永久 ----
+function isExpiredEntry(e) {
+  return !!(e && e.exp && e.exp !== 'forever' && String(e.exp) < beijingDate());
+}
+function expDaysLeft(e) {
+  if (!e || !e.exp || e.exp === 'forever') return Infinity;
+  return Math.round((new Date(e.exp + 'T00:00:00Z') - new Date(beijingDate() + 'T00:00:00Z')) / 86400000);
+}
+function isSoonExpired(e) {
+  const d = expDaysLeft(e);
+  return d !== Infinity && d <= 3;
+}
+function beijingDatePlus(n) {
+  return new Date(Date.now() + 8 * 3600 * 1000 + n * 86400 * 1000).toISOString().slice(0, 10);
+}
+// 到期账号清理：删独立键 + 记墓碑 + 刷 master + 回推 GitHub Secrets（只在有过期时才写）
+async function pruneExpired() {
+  const master = await mergePool();
+  const dead = master.filter(isExpiredEntry);
+  if (!dead.length) return { master: master, count: 0 };
+  await Promise.all(dead.map(e => POOL.delete(entryKeyOf(e))));
+  try {
+    const log = new Set(await getDeadLog());
+    for (const e of dead) log.add(entryKeyOf(e));
+    await POOL.put('dead_log', JSON.stringify([...log].slice(-500)));
+  } catch (e) {}
+  const kept = master.filter(e => !isExpiredEntry(e));
+  try { await POOL.put('master', JSON.stringify(kept)); } catch (e) {}
+  await pushPool(kept);
+  return { master: kept, count: dead.length };
+}
 async function pushPool(entries) {
   const chunks = [];
   let cur = [];
@@ -1574,6 +1605,8 @@ async function mergePool() {
 }
 
 async function addEntry(entry) {
+  // 有效期默认 2 年（730 天），管理端可随时修改（exp=YYYY-MM-DD，forever=永久）
+  if (!entry.exp) entry.exp = beijingDatePlus(730);
   // 查重：先查该账号自己的独立键（单键读，无竞态），再查合并后的主表
   const ekey = entryKeyOf(entry);
   if (await POOL.get(ekey)) {
@@ -1637,12 +1670,13 @@ async function handle(request) {
       const c = await cfg();
       if (!c.adminPass) return json({ message: '尚未设置管理密码：请在 Cloudflare KV 中添加 ADMIN_PASS 键（任意长随机字符串）' }, 503, CORS);
       if (!body.pass || body.pass !== c.adminPass) return json({ message: '管理密码错误' }, 403, CORS);
-      const master = await mergePool();
+      const pr = await pruneExpired();
+      const master = pr.master;
       // 只回展示字段，绝不下发 ck（cookie）等敏感数据
       const entries = master.map(e => ({
         name: e.name || '', uid: e.uid != null ? String(e.uid) : '',
         song: e.song != null ? String(e.song) : '', added: e.added || '',
-        email: e.email || '', noListen: !!e.noListen,
+        email: e.email || '', noListen: !!e.noListen, exp: e.exp || '',
       }));
       const stats = {
         total: entries.length,
@@ -1650,11 +1684,87 @@ async function handle(request) {
         noMail: entries.filter(e => !e.email).length,
         noListen: entries.filter(e => e.noListen).length,
         public: entries.filter(e => !e.song).length,
+        expiring: entries.filter(isSoonExpired).length,
         manual: entries.filter(e => String(e.name).indexOf('manual:') === 0).length,
         limit: c.poolLimitG2,
         remain: Math.max(0, c.poolLimitG2 - entries.length),
       };
       return json({ ok: true, stats: stats, entries: entries }, 200, CORS);
+    }
+    // ---- 管理端账号维护（本地管理页专用）：删除 / 修改（CK、邮箱、歌曲、有效期、暂停互听）----
+    if (url.pathname === '/api/admin/entry' && request.method === 'OPTIONS') {
+      return new Response(null, { status: 204, headers: {
+        'Access-Control-Allow-Origin': '*',
+        'Access-Control-Allow-Methods': 'POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type',
+      } });
+    }
+    if (url.pathname === '/api/admin/entry' && request.method === 'POST') {
+      const CORS = { 'Access-Control-Allow-Origin': '*' };
+      let body;
+      try { body = await request.json(); } catch (e) { return json({ message: '参数错误' }, 400, CORS); }
+      const c = await cfg();
+      if (!c.adminPass) return json({ message: '尚未设置管理密码' }, 503, CORS);
+      if (!body.pass || body.pass !== c.adminPass) return json({ message: '管理密码错误' }, 403, CORS);
+      const master = await mergePool();
+      const target = master.find(e =>
+        (body.uid != null && String(body.uid) !== '' && e.uid != null && String(e.uid) === String(body.uid)) ||
+        (body.name && String(e.name) === String(body.name)));
+      if (!target) return json({ message: '没找到该账号（可能已被删除）' }, 404, CORS);
+      if (body.action === 'delete') {
+        await POOL.delete(entryKeyOf(target));
+        try {
+          const log = new Set(await getDeadLog());
+          log.add(entryKeyOf(target));
+          await POOL.put('dead_log', JSON.stringify([...log].slice(-500)));
+        } catch (e) {}
+        const kept = master.filter(e => e !== target);
+        try { await POOL.put('master', JSON.stringify(kept)); } catch (e) {}
+        await pushPool(kept);
+        return json({ ok: true, message: '已删除账号 ' + (target.name || target.uid) }, 200, CORS);
+      }
+      if (body.action === 'update') {
+        const changes = [];
+        if (body.ck != null && String(body.ck).trim() !== '') {
+          let mu = String(body.ck).trim();
+          const mm = mu.match(/MUSIC_U=([^;\s"']+)/);
+          if (mm) mu = mm[1];
+          if (!/^[A-Za-z0-9%_-]{20,}$/.test(mu)) return json({ message: 'MUSIC_U 格式不对（应为 32 位左右的长字符串）' }, 400, CORS);
+          const v = await validateCookie(mu);
+          if (!v.ok) return json({ message: '新 CK 校验未通过：' + v.msg }, 400, CORS);
+          target.ck = 'MUSIC_U=' + mu;
+          changes.push('CK');
+        }
+        if (body.link != null && String(body.link).trim() !== '') {
+          const song = await resolveSong(String(body.link));
+          if (!song.ok) return json({ message: song.msg }, 400, CORS);
+          target.song = song.song;
+          changes.push('歌曲');
+        }
+        if (body.email != null && String(body.email).trim() !== '') {
+          const em = String(body.email).trim();
+          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return json({ message: '邮箱格式不对' }, 400, CORS);
+          target.email = em;
+          changes.push('邮箱');
+        }
+        if (body.exp != null && String(body.exp).trim() !== '') {
+          const x = String(body.exp).trim();
+          if (x === 'forever' || x === '永久') { delete target.exp; changes.push('有效期=永久'); }
+          else if (/^\d{4}-\d{2}-\d{2}$/.test(x)) { target.exp = x; changes.push('有效期=' + x); }
+          else if (/^\d{1,3}$/.test(x)) { const d = beijingDatePlus(parseInt(x, 10)); target.exp = d; changes.push('有效期=' + x + '天(' + d + '止)'); }
+          else return json({ message: '有效期格式不对：填天数(如30)、日期(2026-12-31)或"永久"' }, 400, CORS);
+        }
+        if (body.noListen !== undefined && body.noListen !== null) {
+          target.noListen = !!body.noListen;
+          changes.push(body.noListen ? '暂停互听(只收不听)' : '恢复互听');
+        }
+        if (!changes.length) return json({ message: '没有要修改的内容（各栏留空=不改）' }, 400, CORS);
+        await POOL.put(entryKeyOf(target), JSON.stringify(target));
+        try { await POOL.put('master', JSON.stringify(master)); } catch (e) {}
+        await pushPool(master);
+        return json({ ok: true, message: '已修改 ' + (target.name || target.uid) + '：' + changes.join('、') }, 200, CORS);
+      }
+      return json({ message: '未知操作' }, 400, CORS);
     }
     if (url.pathname === '/api/sendcode' && request.method === 'POST') {
       let body;
