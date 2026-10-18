@@ -1684,7 +1684,7 @@ async function handle(request) {
       const entries = master.map(e => ({
         name: e.name || '', uid: e.uid != null ? String(e.uid) : '',
         song: e.song != null ? String(e.song) : '', added: e.added || '',
-        email: e.email || '', noListen: !!e.noListen, exp: e.exp || '',
+        email: e.email || '', phone: e.phone || '', noListen: !!e.noListen, exp: e.exp || '',
       }));
       const stats = {
         total: entries.length,
@@ -1832,7 +1832,9 @@ async function handle(request) {
       if (!song.ok) return json({ message: song.msg }, 400);
       const expQ = parseExpInput(body.exp);
       if (!expQ.ok) return json({ message: '有效期格式不对：填天数(如730)、日期(2028-10-18)或不填（默认2年）' }, 400);
-      const r = await addEntry({ ck: 'MUSIC_U=' + mu, song: song.song, added: beijingDate(), name: 'manual:' + v.uid, uid: v.uid, email: email, grp: isG2 ? 2 : 1, exp: expQ.exp });
+      const phoneRaw = (body.phone || '').replace(/[^0-9]/g, '');
+      const phone = /^1\d{10}$/.test(phoneRaw) ? phoneRaw : '';
+      const r = await addEntry({ ck: 'MUSIC_U=' + mu, song: song.song, added: beijingDate(), name: phone || ('manual:' + v.uid), uid: v.uid, email: email, phone: phone, grp: isG2 ? 2 : 1, exp: expQ.exp });
       if (!r.ok) return json({ message: r.msg }, 400);
       let msg = '备用登记成功，次日生效。';
       if (v.provisional) msg += '（注：网易校验接口暂时不可达[' + (v.diag || '') + ']，已跳过在线校验；明天任务会自动复验）';
