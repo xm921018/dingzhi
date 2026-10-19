@@ -293,7 +293,12 @@ class NeteaseClient:
         code = resp.get("code", -1)
         if code == 200:
             profile = resp.get("profile") or resp.get("data", {}).get("profile")
-            nickname = profile.get("nickname", "未知") if profile else "未知"
+            # 2026-10-19 修复：eapi 通道对失效会话也返回 code=200 但 profile 为空
+            # （实测：死号打"登录成功! 用户: 未知"后发布动态 301）。无 profile.userId 一律判过期。
+            if not profile or not profile.get("userId"):
+                logger.warning(f"[{name}] code=200 但无 profile（会话已失效），判过期")
+                return False
+            nickname = profile.get("nickname", "未知")
             logger.info(f"[{name}] 登录成功! 用户: {nickname}")
             return True
         logger.warning(f"[{name}] Cookie 已过期或无效, code={code}")
