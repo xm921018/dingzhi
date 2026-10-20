@@ -21,6 +21,7 @@ import time
 import random
 import base64
 import hashlib
+import math
 import string
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, timedelta
@@ -321,6 +322,19 @@ def main():
             if hot:
                 break
         print(f"[slice {slice_idx}] 混听歌池（热歌榜，剔除群内歌后）{len(hot)} 首")
+
+    # 3.6) 按「每首歌每天要被多少个不同的人听到」反推每个号该听几首。
+    #      650 是 30 天累计 + 按天去重 → 每首歌每天约 22 次就够，留余量取 28。
+    #      号池扩大时这个数不会膨胀（听众和歌曲同步增长），但它防止 cfg 里的值被无脑放大：
+    #      plays_per_account 只作为上限，这里只会调小、绝不调大，避免单号时长失控。
+    target = int(cfg.get("target_plays_per_song", 0))
+    listeners = n + len(set(peer_songs))     # 本群号数 + 对端号数（对端每号一首歌）
+    if target > 0 and song_pool and listeners > 0:
+        derived = max(8, math.ceil(target * len(song_pool) / listeners))
+        if derived < plays:
+            print(f"[slice {slice_idx}] 每号听歌数 {plays} → {derived} 首"
+                  f"（{listeners} 个听众共享 {len(song_pool)} 首歌，按每首每天 {target} 次反推）")
+            plays = derived
 
     parallel = max(1, int(os.environ.get("ACCOUNT_PARALLEL", "3")))
 
