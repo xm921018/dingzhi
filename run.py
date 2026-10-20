@@ -58,6 +58,8 @@ PLAY_RATIO_MIN, PLAY_RATIO_MAX = 0.55, 0.70
 # 跨群互听（2026-10-20）：只向对端群拉「歌曲 id 列表」，双方的 KV 号池、人数、上限完全独立。
 # 鉴权复用本群已有的群口令 NB_PASS：对端 worker 的 PEER_PASS 键里存的就是本群口令（管理员写成对穿的），
 # 所以不需要新建任何 GitHub Secret。PEER_PASS 环境变量留作以后手工覆盖用。
+BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+              "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
 PEER_WORKER_URL = os.environ.get("PEER_WORKER_URL", "").strip()
 PEER_PASS = os.environ.get("PEER_PASS", "").strip() or os.environ.get("NB_PASS", "").strip()
 
@@ -219,8 +221,10 @@ def load_peer_songs():
         print("[peer] 未配置跨群互听（缺 PEER_WORKER_URL / PEER_PASS），本次只听本群")
         return []
     try:
+        # 必须带浏览器 UA：Cloudflare 的浏览器完整性检查会拦 Python-requests 的默认 UA（403 / error 1010）
         r = requests.get(PEER_WORKER_URL.rstrip("/") + "/api/songs",
-                         params={"pass": PEER_PASS}, timeout=45)
+                         params={"pass": PEER_PASS}, timeout=45,
+                         headers={"User-Agent": BROWSER_UA, "Accept": "application/json"})
         d = r.json()
         songs = [str(s) for s in (d.get("songs") or []) if s]
         print(f"[peer] 对端群可听歌曲 {len(songs)} 首（HTTP {r.status_code}）")
