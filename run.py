@@ -43,7 +43,7 @@ MOBILE_UAS = [
 # 混听来源：云音乐热歌榜（公开歌单，真实在榜歌曲，随官方榜单变化）
 MIX_HOT_PID = 3778678
 # 登记页 Worker 地址（失效账号清理上报用）
-WORKER_URL = "https://dingzhi.listenmusic888.workers.dev"
+WORKER_URL = "https://dz.xx1031.xyz"
 # 有效播放门槛为单次 >=30s，保底 35s 留余量（短歌按比例算不足 35s 时也报 35s）
 MIN_PLAY_SECONDS = 35
 
