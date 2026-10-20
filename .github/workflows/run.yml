@@ -23,7 +23,8 @@ jobs:
           NB_POOL_5: ${{ secrets.NB_POOL_5 }}
           MIN_SLICES: '4'
           MAX_SLICES: '40'
-          ACCOUNTS_PER_SLICE: '6'   # 单号约 35-50 分钟（28 群内歌+6-10 热歌），6 个/片 ≈ 3.5-5h，留足 6h job 上限余量
+          ACCOUNTS_PER_SLICE: '6'   # 2026-10-20：改为「每个号独立线程并行」后，单号 85-95 分钟不再叠加。
+                                    # 6 个/片 ≈ 1.6h（并行），片数按号池自动算，一轮基本能跑完。
         run: |
           python3 - <<'EOF'
           import base64, json, os, math
@@ -58,6 +59,10 @@ jobs:
       NS: ${{ needs.plan.outputs.ns }}
       SLICE: ${{ matrix.slice }}
       NB_PASS: ${{ secrets.NB_PASS }}
+      # 跨群互听：只拉对端群的歌曲 id 列表，两个群的 KV 号池/人数/上限仍然完全独立
+      PEER_WORKER_URL: 'https://xx1031.xyz'
+      # 跨群鉴权复用本群群口令 NB_PASS（对端 KV 的 PEER_PASS 存的是本群口令，无需新建 Secret）
+      ACCOUNT_PARALLEL: '6'   # 每个号一个线程并行播放（单号大部分时间在等播放时长，不占 CPU）
       NB_POOL_1: ${{ secrets.NB_POOL_1 }}
       NB_POOL_2: ${{ secrets.NB_POOL_2 }}
       NB_POOL_3: ${{ secrets.NB_POOL_3 }}
