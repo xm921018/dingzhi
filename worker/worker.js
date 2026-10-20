@@ -2157,7 +2157,12 @@ function render(){
   });
   $('tb').innerHTML=h||'<tr><td colspan="7" style="text-align:center;color:#999;padding:20px">没有匹配的账号</td></tr>';
 }
-try{ if(localStorage.getItem('poolAdminPass')) fetchPool(); }catch(e){}
+try{
+  var _pw=null;
+  try{var _h=(location.hash||'').match(/(?:^#|[#&])pw=([^&]*)/)||(location.search||'').match(/[?&]pw=([^&]*)/);if(_h)_pw=decodeURIComponent(_h[1]);}catch(e){}
+  if(_pw){try{history.replaceState(null,'',location.pathname);}catch(e1){};var _el=$('pw');if(_el)_el.value=_pw;login();}
+  else if(localStorage.getItem('poolAdminPass')) fetchPool();
+}catch(e){}
 </script>
 </body>
 </html>`;
