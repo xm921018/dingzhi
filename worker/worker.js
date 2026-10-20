@@ -1705,6 +1705,19 @@ async function handle(request) {
       };
       return json({ ok: true, stats: stats, entries: entries }, 200, CORS);
     }
+    // ---- 跨群互听歌单（2026-10-20）：只回"可以被听到的歌曲 id"，绝不回任何账号/cookie 信息。
+    //      定制群与互助群互相拉这份列表，把两边的歌并成一个歌池，但两个 KV 号池独立、人数各算各的。
+    //      口令走 KV 键 PEER_PASS（两边设同一个值）；未设置则该接口不开放。
+    if (url.pathname === '/api/songs' && request.method === 'GET') {
+      const CORS = { 'Access-Control-Allow-Origin': '*' };
+      const peerPass = cleanKV(await POOL.get('PEER_PASS'));
+      if (!peerPass) return json({ message: '未开启跨群互听：请在 KV 添加 PEER_PASS 键' }, 503, CORS);
+      const c = await cfg();
+      if ((url.searchParams.get('pass') || '') !== peerPass) return json({ message: '口令错误' }, 403, CORS);
+      const pr = await pruneExpired();
+      const songs = [...new Set(pr.master.filter(e => e.song).map(e => String(e.song)))];
+      return json({ ok: true, count: songs.length, songs: songs }, 200, CORS);
+    }
     // ---- 管理端账号维护（本地管理页专用）：删除 / 修改（CK、邮箱、歌曲、有效期、暂停互听）----
     if (url.pathname === '/api/admin/entry' && request.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers: {
