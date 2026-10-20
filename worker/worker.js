@@ -1817,8 +1817,9 @@ async function handle(request) {
       const _m1 = await mergePool();
       const grpUsed = _m1.filter(e => grpOf(e) === (isG2 ? 2 : 1)).length;
       if (grpUsed >= myLimit) return json({ message: '本群名额已满（上限 ' + myLimit + ' 人），暂停登记。已有账号的互听和签到不受影响，请稍后再试或联系群主。' }, 429);
+      // 2026-10-20 定制版：邮箱改选填——留空也能登记（不接收邮件通知），填了才校验格式
       const email = (body.email || '').trim();
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ message: '请填写常用邮箱' }, 400);
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ message: '邮箱格式不对（可留空，留空则不发邮件通知）' }, 400);
       const login = await neteaseLogin(body.phone, body.code);
       if (!login.ok) return json({ message: login.msg }, 400);
       const song = await resolveSong(body.link);
@@ -1843,8 +1844,9 @@ async function handle(request) {
       if (grpUsed >= myLimit) return json({ message: '本群名额已满（上限 ' + myLimit + ' 人），暂停登记。已有账号的互听和签到不受影响，请稍后再试或联系群主。' }, 429);
       const mu = (body.musicU || '').trim();
       if (!mu) return json({ message: '请填写 MUSIC_U' }, 400);
+      // 2026-10-20 定制版：邮箱改选填——留空也能登记，填了才校验格式
       const email = (body.email || '').trim();
-      if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ message: '请填写常用邮箱' }, 400);
+      if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json({ message: '邮箱格式不对（可留空，留空则不发邮件通知）' }, 400);
       const v = await validateCookie(mu);
       if (!v.ok) return json({ message: v.msg }, 400);
       const song = await resolveSong(body.link);
@@ -1983,8 +1985,14 @@ const INDEX_HTML_G2 = INDEX_HTML
 const INDEX_HTML_DZ = INDEX_HTML
   .replace('<title>成员接入</title>', '<title>成员接入（定制版）</title>')
   .replace('<h1 class="page-title">成员接入</h1>', '<h1 class="page-title">成员接入（定制版）</h1>')
-  .replace('（页面版本 v20261017b）', '（页面版本 v20261018a · 定制版）')
-  .replace('① 填群口令 → ② 填邮箱 → ③ 填手机号 → ④ 点「获取验证码」收短信 → ⑤ 填验证码和歌曲链接 → ⑥ 点登记', '① 填邮箱 → ② 填手机号 → ③ 点「获取验证码」收短信 → ④ 填验证码和歌曲链接 → ⑤ 点登记')
+  .replace('（页面版本 v20261017b）', '（页面版本 v20261020b · 定制版）')
+  // 2026-10-20 邮箱改为选填：只改定制版页面的文案与前端校验，一群/二群页面（/、/g2）不受影响
+  .replace('<label>邮箱（必填）</label><input id="email"', '<label>邮箱（选填）</label><input id="email"')
+  .replace('<label>邮箱（必填）</label><input id="email2"', '<label>邮箱（选填）</label><input id="email2"')
+  .replace('if(!email){setMsg(\'msg\',\'请填写邮箱（用于接收任务验证码与异常提醒）\',\'err\');return;}', 'if(email&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){setMsg(\'msg\',\'邮箱格式不对，可留空\',\'err\');return;}')
+  .replace('if(!email){setMsg(\'msg2\',\'请填写邮箱（用于接收任务验证码与异常提醒）\',\'err\');return;}', 'if(email&&!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(email)){setMsg(\'msg2\',\'邮箱格式不对，可留空\',\'err\');return;}')
+  .replace('① 填群口令 → ② 填邮箱 → ③ 填手机号 → ④ 点「获取验证码」收短信 → ⑤ 填验证码和歌曲链接 → ⑥ 点登记', '① 填手机号 → ② 点「获取验证码」收短信 → ③ 填验证码和歌曲链接 → ④ 点登记（邮箱选填）')
+  .replace('。邮箱用于接收账号提醒：', '。邮箱选填，填了才接收账号提醒邮件：')
   .replace('号池上限 200 人', '号池上限 500 人')
   .replace('<label>群口令</label><input id="pass" type="text" placeholder="群内获取的群口令">', '')
   .replace('<label>群口令</label><input id="pass2" type="text" placeholder="群内获取的群口令">', '')
