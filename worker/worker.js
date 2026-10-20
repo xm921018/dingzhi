@@ -1317,6 +1317,11 @@ async function resolveSong(link) {
   // 容错：成员经常把 APP 分享的整段文字（带歌名/emoji/@）直接粘进来，先提取出里面的第一个 URL
   const picked = link.match(/https?:\/\/[^\s"'《》<>，,）)】]+/);
   let url = (picked ? picked[0] : link).trim();
+  // 先在【原链接】上提取 id：网易云 APP 分享出来的单曲链接是 SPA 格式
+  // music.163.com/#/song?id=xxx，井号后是 URL fragment，HTTP 请求不发送 fragment，
+  // fetch 之后的 r.url 会把 id 一起丢掉，所以必须在 fetch 之前匹配
+  // （网页版复制的 song?id= 格式、短链重定向后的 URL 同样兼容）
+  let m = url.match(/[?&]id=(\d+)/);
   // 只收单曲：歌单/专辑/电台/节目/排行榜链接一律拒绝（防一个链接带出整张歌单）
   const COLLECT = /\/(playlist|album|radio|program|toplist)\b/i;
   if (COLLECT.test(url)) {
@@ -1329,7 +1334,8 @@ async function resolveSong(link) {
   if (COLLECT.test(url)) {
     return { ok: false, msg: '不支持歌单/专辑等合集链接（一个歌单曲目太多）。请在网易云 APP 里打开【其中一首歌】→ 点分享 → 复制链接，只登记单曲' };
   }
-  const m = url.match(/[?&]id=(\d+)/);
+  // 原链接没带 id（如 163cn.tv 短链）时，用跟随重定向后的 r.url 兜底匹配一次
+  if (!m) m = url.match(/[?&]id=(\d+)/);
   if (!m) return { ok: false, msg: '链接里没找到歌曲 id：识别到 ' + url.slice(0, 80) + '。请在网易云 APP 里点「分享→复制链接」，把 http 开头的完整链接粘过来' };
   // 双保险：调网易歌曲详情接口确认这个 id 确实是一首歌（防歌单/电台 id 伪装混入）
   try {
