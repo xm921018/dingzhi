@@ -38,8 +38,8 @@ PASS_FILE = os.path.join(BASE_DIR, "群口令_本地备份.txt")
 CF_ACCOUNT = "c60450bfb7f2c2becfd744ba2508a4f2"
 CF_NS = "8251dadecfe64bba89f8d2e639d322e1"          # KV 命名空间 POOL-DZ（定制版独立号池）
 KV_KEY = "master"
-WORKER_URL = "https://dingzhi.listenmusic888.workers.dev"
-# resync 走 Worker（workers.dev 国内需代理；先直连试一次，失败换本地代理）
+WORKER_URL = "https://dz.xx1031.xyz"
+# resync 走 Worker（自定义域名 dz.xx1031.xyz 国内直连可达；先直连试一次，失败换本地代理）
 PROXIES = {"https": "http://127.0.0.1:7897", "http": "http://127.0.0.1:7897"}
 NETEASE_ACC_API = "https://music.163.com/api/nuser/account/get"
 
