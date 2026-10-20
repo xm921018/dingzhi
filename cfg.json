@@ -1,7 +1,7 @@
 {
-  "plays_per_account": 28,
+  "plays_per_account": 34,
   "skip_prob": 0.08,
   "mixed_plays_min": 6,
   "mixed_plays_max": 10,
-  "note": "运行参数。plays_per_account = 每个账号每天听几首别人的歌（绝不听自己的）。mixed_plays_min/max = 每个账号每天额外混听几首热歌榜的群外歌曲（0 为关闭），用于冲淡只听圈内歌曲的特征。"
+  "note": "运行参数。plays_per_account = 每个账号每天听几首别人的歌（绝不听自己的）。2026-10-20 由 28 提到 34：跨群合并后歌池从 ~116 首涨到 ~190 首，播放被摊薄，提高每号听歌数以维持「每首歌每天 28 次左右」，30 天可稳过 650。mixed_plays_min/max = 每个账号每天额外混听几首热歌榜的群外歌曲（0 为关闭），用于冲淡只听圈内歌曲的特征。"
 }
