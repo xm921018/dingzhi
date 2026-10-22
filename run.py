@@ -257,13 +257,18 @@ class Client:
 
 
 def load_pool():
+    # 2026-10-22：分片改 gzip+base64（worker 端超过 48KB 的 Secret 会被 GitHub 422 拒绝），
+    # 按 gzip 魔数 1f8b 自动识别，兼容旧版纯 base64+JSON 格式；槽位扩到 NB_POOL_1..12
     entries = []
-    for i in range(1, 6):
+    for i in range(1, 13):
         raw = os.environ.get(f"NB_POOL_{i}")
         if not raw:
             continue
         try:
-            chunk = json.loads(base64.b64decode(raw).decode("utf-8"))
+            data = base64.b64decode(raw)
+            if data[:2] == b"\x1f\x8b":
+                data = gzip.decompress(data)
+            chunk = json.loads(data.decode("utf-8"))
             if isinstance(chunk, list):
                 entries.extend(chunk)
         except Exception:
