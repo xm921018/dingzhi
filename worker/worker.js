@@ -1733,65 +1733,8 @@ async function handle(request) {
       const c = await cfg();
       if (!c.adminPass) return json({ message: '尚未设置管理密码' }, 503, CORS);
       if (!body.pass || body.pass !== c.adminPass) return json({ message: '管理密码错误' }, 403, CORS);
-      const master = await mergePool();
-      const target = master.find(e =>
-        (body.uid != null && String(body.uid) !== '' && e.uid != null && String(e.uid) === String(body.uid)) ||
-        (body.name && String(e.name) === String(body.name)));
-      if (!target) return json({ message: '没找到该账号（可能已被删除）' }, 404, CORS);
-      if (body.action === 'delete') {
-        await POOL.delete(entryKeyOf(target));
-        try {
-          const log = new Set(await getDeadLog());
-          log.add(entryKeyOf(target));
-          await POOL.put('dead_log', JSON.stringify([...log].slice(-500)));
-        } catch (e) {}
-        const kept = master.filter(e => e !== target);
-        try { await POOL.put('master', JSON.stringify(kept)); } catch (e) {}
-        await pushPool(kept);
-        return json({ ok: true, message: '已删除账号 ' + (target.name || target.uid) }, 200, CORS);
-      }
-      if (body.action === 'update') {
-        const changes = [];
-        if (body.ck != null && String(body.ck).trim() !== '') {
-          let mu = String(body.ck).trim();
-          const mm = mu.match(/MUSIC_U=([^;\s"']+)/);
-          if (mm) mu = mm[1];
-          if (!/^[A-Za-z0-9%_-]{20,}$/.test(mu)) return json({ message: 'MUSIC_U 格式不对（应为 32 位左右的长字符串）' }, 400, CORS);
-          const v = await validateCookie(mu);
-          if (!v.ok) return json({ message: '新 CK 校验未通过：' + v.msg }, 400, CORS);
-          target.ck = 'MUSIC_U=' + mu;
-          changes.push('CK');
-        }
-        if (body.link != null && String(body.link).trim() !== '') {
-          const song = await resolveSong(String(body.link));
-          if (!song.ok) return json({ message: song.msg }, 400, CORS);
-          target.song = song.song;
-          changes.push('歌曲');
-        }
-        if (body.email != null && String(body.email).trim() !== '') {
-          const em = String(body.email).trim();
-          if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return json({ message: '邮箱格式不对' }, 400, CORS);
-          target.email = em;
-          changes.push('邮箱');
-        }
-        if (body.exp != null && String(body.exp).trim() !== '') {
-          const x = String(body.exp).trim();
-          if (x === 'forever' || x === '永久') { delete target.exp; changes.push('有效期=永久'); }
-          else if (/^\d{4}-\d{2}-\d{2}$/.test(x)) { target.exp = x; changes.push('有效期=' + x); }
-          else if (/^\d{1,3}$/.test(x)) { const d = beijingDatePlus(parseInt(x, 10)); target.exp = d; changes.push('有效期=' + x + '天(' + d + '止)'); }
-          else return json({ message: '有效期格式不对：填天数(如30)、日期(2026-12-31)或"永久"' }, 400, CORS);
-        }
-        if (body.noListen !== undefined && body.noListen !== null) {
-          target.noListen = !!body.noListen;
-          changes.push(body.noListen ? '暂停互听(只收不听)' : '恢复互听');
-        }
-        if (!changes.length) return json({ message: '没有要修改的内容（各栏留空=不改）' }, 400, CORS);
-        await POOL.put(entryKeyOf(target), JSON.stringify(target));
-        try { await POOL.put('master', JSON.stringify(master)); } catch (e) {}
-        await pushPool(master);
-        return json({ ok: true, message: '已修改 ' + (target.name || target.uid) + '：' + changes.join('、') }, 200, CORS);
-      }
-      return json({ message: '未知操作' }, 400, CORS);
+      // 2026-10-22：编辑逻辑抽成 applyEntryEdit，供本路由与跨群对等接口 /api/peer/entry 共用（行为不变）
+      return applyEntryEdit(body);
     }
     if (url.pathname === '/api/sendcode' && request.method === 'POST') {
       let body;
@@ -1959,10 +1902,101 @@ async function handle(request) {
       await pushPool(after);
       return json({ message: `清理 ${before - after.length} 个失效账号，剩余 ${after.length} 个。` });
     }
+    // ---- 进阶控制台对等接口（2026-10-22 新增）：主群控制台（xx1031.xyz/console）需要读/编定制群账号 ----
+    //      口令 = KV 键 PEER_PASS（与主群 worker 一致的对穿口令）；只回展示字段，绝不下发 ck。
+    if (url.pathname === '/api/peer/pool' && request.method === 'GET') {
+      const CORS = { 'Access-Control-Allow-Origin': '*' };
+      const peerPass = cleanKV(await POOL.get('PEER_PASS'));
+      if (!peerPass) return json({ message: '未开启跨群互听：请在 KV 添加 PEER_PASS 键' }, 503, CORS);
+      const c = await cfg();
+      if ((url.searchParams.get('pass') || '') !== peerPass) return json({ message: '口令错误' }, 403, CORS);
+      const pr = await pruneExpired();
+      const entries = pr.master.map(e => ({
+        name: e.name || '', uid: e.uid != null ? String(e.uid) : '',
+        song: e.song != null ? String(e.song) : '', added: e.added || '',
+        email: e.email || '', phone: e.phone || '', noListen: !!e.noListen, exp: e.exp || '',
+      }));
+      return json({ ok: true, entries: entries }, 200, CORS);
+    }
+    // 跨群编辑（删除/修改），与 /api/admin/entry 完全同一套逻辑，仅鉴权换成 PEER_PASS
+    if (url.pathname === '/api/peer/entry' && request.method === 'POST') {
+      const CORS = { 'Access-Control-Allow-Origin': '*' };
+      let body;
+      try { body = await request.json(); } catch (e) { return json({ message: '参数错误' }, 400, CORS); }
+      const peerPass = cleanKV(await POOL.get('PEER_PASS'));
+      if (!peerPass) return json({ message: '未开启跨群互听：请在 KV 添加 PEER_PASS 键' }, 503, CORS);
+      if (!body.pass || body.pass !== peerPass) return json({ message: '口令错误' }, 403, CORS);
+      return applyEntryEdit(body);
+    }
     return json({ message: 'not found' }, 404);
 }
 
 function json(o, status = 200, extraHeaders) { return new Response(JSON.stringify(o), { status, headers: Object.assign({ 'Content-Type': 'application/json' }, extraHeaders || {}) }); }
+
+// ---- 账号编辑共用逻辑（2026-10-22 从 /api/admin/entry 抽出，行为与原实现逐行一致）----
+// 供 /api/admin/entry（管理密码）与 /api/peer/entry（跨群对穿口令）两个路由调用。
+async function applyEntryEdit(body) {
+  const CORS = { 'Access-Control-Allow-Origin': '*' };
+  const master = await mergePool();
+  const target = master.find(e =>
+    (body.uid != null && String(body.uid) !== '' && e.uid != null && String(e.uid) === String(body.uid)) ||
+    (body.name && String(e.name) === String(body.name)));
+  if (!target) return json({ message: '没找到该账号（可能已被删除）' }, 404, CORS);
+  if (body.action === 'delete') {
+    await POOL.delete(entryKeyOf(target));
+    try {
+      const log = new Set(await getDeadLog());
+      log.add(entryKeyOf(target));
+      await POOL.put('dead_log', JSON.stringify([...log].slice(-500)));
+    } catch (e) {}
+    const kept = master.filter(e => e !== target);
+    try { await POOL.put('master', JSON.stringify(kept)); } catch (e) {}
+    await pushPool(kept);
+    return json({ ok: true, message: '已删除账号 ' + (target.name || target.uid) }, 200, CORS);
+  }
+  if (body.action === 'update') {
+    const changes = [];
+    if (body.ck != null && String(body.ck).trim() !== '') {
+      let mu = String(body.ck).trim();
+      const mm = mu.match(/MUSIC_U=([^;\s"']+)/);
+      if (mm) mu = mm[1];
+      if (!/^[A-Za-z0-9%_-]{20,}$/.test(mu)) return json({ message: 'MUSIC_U 格式不对（应为 32 位左右的长字符串）' }, 400, CORS);
+      const v = await validateCookie(mu);
+      if (!v.ok) return json({ message: '新 CK 校验未通过：' + v.msg }, 400, CORS);
+      target.ck = 'MUSIC_U=' + mu;
+      changes.push('CK');
+    }
+    if (body.link != null && String(body.link).trim() !== '') {
+      const song = await resolveSong(String(body.link));
+      if (!song.ok) return json({ message: song.msg }, 400, CORS);
+      target.song = song.song;
+      changes.push('歌曲');
+    }
+    if (body.email != null && String(body.email).trim() !== '') {
+      const em = String(body.email).trim();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) return json({ message: '邮箱格式不对' }, 400, CORS);
+      target.email = em;
+      changes.push('邮箱');
+    }
+    if (body.exp != null && String(body.exp).trim() !== '') {
+      const x = String(body.exp).trim();
+      if (x === 'forever' || x === '永久') { delete target.exp; changes.push('有效期=永久'); }
+      else if (/^\d{4}-\d{2}-\d{2}$/.test(x)) { target.exp = x; changes.push('有效期=' + x); }
+      else if (/^\d{1,3}$/.test(x)) { const d = beijingDatePlus(parseInt(x, 10)); target.exp = d; changes.push('有效期=' + x + '天(' + d + '止)'); }
+      else return json({ message: '有效期格式不对：填天数(如30)、日期(2026-12-31)或"永久"' }, 400, CORS);
+    }
+    if (body.noListen !== undefined && body.noListen !== null) {
+      target.noListen = !!body.noListen;
+      changes.push(body.noListen ? '暂停互听(只收不听)' : '恢复互听');
+    }
+    if (!changes.length) return json({ message: '没有要修改的内容（各栏留空=不改）' }, 400, CORS);
+    await POOL.put(entryKeyOf(target), JSON.stringify(target));
+    try { await POOL.put('master', JSON.stringify(master)); } catch (e) {}
+    await pushPool(master);
+    return json({ ok: true, message: '已修改 ' + (target.name || target.uid) + '：' + changes.join('、') }, 200, CORS);
+  }
+  return json({ message: '未知操作' }, 400, CORS);
+}
 
 const INDEX_HTML = `<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>成员接入</title><style>body{font-family:-apple-system,system-ui,"PingFang SC",sans-serif;background:#f5f6f8;margin:0;padding:24px 12px;display:flex;flex-direction:column;align-items:center;gap:16px}.head{text-align:center;margin-bottom:2px}.page-title{font-size:20px;font-weight:600;color:#3b6d11;margin:0}.page-sub{font-size:13px;color:#666;margin:6px 0 0}.wrap{display:flex;flex-wrap:wrap;gap:18px;justify-content:center;width:100%;max-width:1060px}.card{background:#fff;padding:26px 22px;border-radius:14px;width:330px;min-width:0;box-sizing:border-box;box-shadow:0 2px 12px rgba(0,0,0,.08)}h1{font-size:17px;margin:0 0 4px}h1.alt{color:#b06a00}p{font-size:13px;color:#666;margin:0 0 16px;line-height:1.5}label{display:block;font-size:13px;margin:12px 0 4px;color:#333}input{width:100%;box-sizing:border-box;padding:10px;border:1px solid #ddd;border-radius:8px;font-size:14px}.row{display:flex;gap:8px}.row input{flex:1}button{margin-top:14px;width:100%;padding:11px;border:0;border-radius:8px;background:#3b6d11;color:#fff;font-size:15px;cursor:pointer}button.mini{margin-top:0;width:auto;padding:10px 12px;font-size:13px;background:#5a8f1d;white-space:nowrap}button:disabled{opacity:.55;cursor:default}.msg{margin-top:14px;font-size:13px;min-height:18px;line-height:1.5}.ok{color:#3b6d11}.err{color:#a32d2d}.tip{color:#666}details{margin-top:14px;font-size:12px;color:#666;line-height:1.6}summary{cursor:pointer;color:#3b6d11}code{background:#eee;padding:1px 4px;border-radius:4px}.admin-entry{margin:10px 0 0;font-size:12px}.admin-entry a{color:#3b6d11;text-decoration:none;border-bottom:1px dashed #3b6d11;padding-bottom:1px}.abox{background:#fff;padding:22px;border-radius:14px;box-shadow:0 2px 12px rgba(0,0,0,.08);width:100%;max-width:1060px;box-sizing:border-box}.stats{display:flex;flex-wrap:wrap;gap:10px;margin:0 0 14px}.stat{flex:1;min-width:100px;background:#f2f7ea;border-radius:10px;padding:10px 12px;text-align:center}.stat b{display:block;font-size:20px;color:#3b6d11}.stat span{font-size:12px;color:#666}.stat.warn b{color:#b06a00}.stat.warn{background:#fdf3e3}.tools{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}.tools input{flex:1;min-width:160px;padding:9px 10px;border:1px solid #ddd;border-radius:8px;font-size:14px}.tools button{margin-top:0;width:auto;padding:9px 14px;font-size:13px}button.gray{background:#888}.twrap{overflow-x:auto;border:1px solid #eee;border-radius:10px}table{border-collapse:collapse;width:100%;font-size:13px}th{background:#f5f6f8;text-align:left;padding:9px 10px;white-space:nowrap;color:#444;border-bottom:1px solid #eee}td{padding:8px 10px;border-bottom:1px solid #f2f2f2;white-space:nowrap}tr:hover td{background:#fafdf5}.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:8px;margin-right:4px}.b-red{background:#fbe4e4;color:#a32d2d}.b-gray{background:#eee;color:#666}.b-yellow{background:#fdf3e3;color:#b06a00}.num{font-family:ui-monospace,Consolas,monospace;color:#555}</style></head><body><div class="head"><h1 class="page-title">成员接入</h1><p class="page-sub">上方两种方式登记新账号；已经登记过的成员，可在下方补录或修改通知邮箱（页面版本 v20261017b）</p><p class="admin-entry"><a href="/admin">群主管理后台</a></p></div><div class="wrap"><div class="card"><h1>成员接入（方式一 · 手机登录）</h1><p>① 填群口令 → ② 填邮箱 → ③ 填手机号 → ④ 点「获取验证码」收短信 → ⑤ 填验证码和歌曲链接 → ⑥ 点登记。系统自动登录并登记，<b>次日生效</b>。邮箱用于接收账号提醒：账号需要完成一次验证、或登录过期时，会发邮件到这个邮箱通知你。注意：<b>每个账号限登记一首歌</b>，重复登记会被拒绝；<b>号池上限 200 人</b>，满员后暂停登记。<b>若提示短信发送失败（网易限制机房 IP，属正常现象），请直接用下方方式二。</b></p><label>手机号</label><input id="phone" inputmode="numeric" maxlength="11" placeholder="11 位手机号"><label>短信验证码</label><div class="row"><input id="code" inputmode="numeric" maxlength="6" placeholder="网易云短信验证码"><button id="send" class="mini">获取验证码</button></div><label>分享链接</label><input id="link" placeholder="粘贴 APP 内分享的单曲链接"><label>群口令</label><input id="pass" type="text" placeholder="群内获取的群口令"><label>邮箱（必填）</label><input id="email" type="text" placeholder="账号有变化时邮件通知你"><button id="btn">登录并登记</button><div class="msg tip" id="msg">提示：只支持【单曲】链接，歌单/专辑会被拒绝。链接在网易云 APP 里「分享→复制链接」即可。</div></div><div class="card"><h1 class="alt">成员接入（方式二 · 推荐）</h1><p>最稳的登记方式：自己从浏览器复制 <code>MUSIC_U</code> 粘贴过来，同样<b>次日生效</b>。<b>每个账号限登记一首歌</b>，重复登记会被拒绝。</p><label>MUSIC_U</label><input id="mu" placeholder="粘贴浏览器里的 MUSIC_U 值"><label>分享链接</label><input id="link2" placeholder="粘贴 APP 内分享的单曲链接"><label>群口令</label><input id="pass2" type="text" placeholder="群内获取的群口令"><label>邮箱（必填）</label><input id="email2" type="text" placeholder="账号有变化时邮件通知你"><button id="btn2">直接登记</button><details><summary>怎么拿到 MUSIC_U？（点开看）</summary>用电脑浏览器打开 <code>https://music.163.com</code> 并登录 → 按 <code>F12</code> → 切到「Application / 应用」标签 → 左侧展开 <code>Cookies</code> → 选 <code>music.163.com</code> → 在右边找到名为 <code>MUSIC_U</code> 的那一行，复制它的「Value / 值」整串粘进来即可。</details><div class="msg tip" id="msg2"></div></div><div class="card"><h1 class="alt">绑定 / 更换通知邮箱</h1><p>之前登记时没填邮箱、或者想换一个邮箱，在这里改一下就行。<b>只改邮箱，其他设置原样不动</b>，之后想再换随时能来改。账号有变化时（比如需要完成一次验证、登录过期），会发邮件到这个邮箱提醒你。</p><label>手机号（方式一登记的填这个）</label><input id="pm_phone" inputmode="numeric" maxlength="11" placeholder="登记时用的 11 位手机号"><label>MUSIC_U（方式二登记的填这个，与手机号二选一即可）</label><input id="pm_mu" placeholder="方式二登记时粘贴的 MUSIC_U"><label>常用邮箱</label><input id="pm_email" type="text" placeholder="name@qq.com"><label>群口令</label><input id="pm_pass" type="text" placeholder="群内获取的群口令"><button id="btn3">保存邮箱</button><div class="msg tip" id="msg3">手机号和 MUSIC_U 填其中一个就行。</div></div></div><script>const $=id=>document.getElementById(id);function normPhone(s){return (s||'').replace(/[０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-65248)).replace(/[^0-9]/g,'');}function setMsg(el,t,cls){const m=$(el);m.textContent=t;m.className='msg'+(cls?(' '+cls):'');}let timer=null;$('send').onclick=async()=>{const phone=normPhone($('phone').value),pass=$('pass').value.trim();if(!/^1[0-9]{10}$/.test(phone)){setMsg('msg','手机号格式不对：识别到 '+phone.length+' 位（'+phone+'）。若带了 +86 前缀请删掉，只填 11 位号码','err');return;}if(!pass){setMsg('msg','请先填写群口令（群内获取，填了口令才能收验证码）','err');return;}$('send').disabled=true;setMsg('msg','正在发送验证码…');try{const r=await fetch('/api/sendcode',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,pass})});const d=await r.json();if(r.ok){setMsg('msg','验证码已发送，请查收短信','ok');startCd();}else{setMsg('msg',d.message||'发送失败，请重试','err');$('send').disabled=false;}}catch(e){setMsg('msg','网络错误，请重试','err');$('send').disabled=false;}};function startCd(){let cd=60;$('send').textContent=cd+'s';timer=setInterval(()=>{cd--;if(cd<=0){clearInterval(timer);timer=null;$('send').textContent='获取验证码';$('send').disabled=false;}else{$('send').textContent=cd+'s';}},1000);}$('btn').onclick=async()=>{const phone=normPhone($('phone').value),code=$('code').value.trim(),link=$('link').value.trim(),pass=$('pass').value.trim(),email=$('email').value.trim();if(!/^1[0-9]{10}$/.test(phone)){setMsg('msg','手机号格式不对','err');return;}if(!/^[0-9]{4,6}$/.test(code)){setMsg('msg','请填写验证码','err');return;}if(!link){setMsg('msg','请填写歌曲链接','err');return;}if(!email){setMsg('msg','请填写邮箱（用于接收任务验证码与异常提醒）','err');return;}setMsg('msg','处理中…');$('btn').disabled=true;try{const r=await fetch('/api/join',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,code,link,pass,email})});const d=await r.json();if(r.ok){setMsg('msg',d.message||'登记成功，次日开始。','ok');}else{setMsg('msg',d.message||'失败','err');}}catch(e){setMsg('msg','网络错误','err');}$('btn').disabled=false;};$('btn2').onclick=async()=>{const musicU=$('mu').value.trim(),link=$('link2').value.trim(),pass=$('pass2').value.trim(),email=$('email2').value.trim();if(!musicU){setMsg('msg2','请填写 MUSIC_U','err');return;}if(!email){setMsg('msg2','请填写邮箱（用于接收任务验证码与异常提醒）','err');return;}if(!link){setMsg('msg2','请填写歌曲链接','err');return;}setMsg('msg2','处理中…');$('btn2').disabled=true;try{const r=await fetch('/api/join_manual',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({musicU,link,pass,email})});const d=await r.json();if(r.ok){setMsg('msg2',d.message||'登记成功，次日开始。','ok');}else{setMsg('msg2',d.message||'失败','err');}}catch(e){setMsg('msg2','网络错误','err');}$('btn2').disabled=false;};$('btn3').onclick=async()=>{const phone=normPhone($('pm_phone').value),mu=$('pm_mu').value.trim(),email=$('pm_email').value.trim(),pass=$('pm_pass').value.trim();if(!phone&&!mu){setMsg('msg3','手机号和 MUSIC_U 至少填一个（方式二登记的填 MUSIC_U）','err');return;}if(!email){setMsg('msg3','请填写常用邮箱','err');return;}if(!pass){setMsg('msg3','请先填写群口令','err');return;}setMsg('msg3','正在保存…');$('btn3').disabled=true;try{const r=await fetch('/api/updatemail',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({phone,mu,email,pass})});const d=await r.json();if(r.ok){setMsg('msg3',d.message||'已保存','ok');}else{setMsg('msg3',d.message||'保存失败','err');}}catch(e){setMsg('msg3','网络错误','err');}$('btn3').disabled=false;};</script><script>(function(){var re=/(登录失败|短信发送失败)/,done=false;function fire(){if(done)return;done=true;var mu=document.getElementById('mu');if(mu){var c=mu.closest('.card');if(c){c.style.outline='2px solid #b06a00';c.scrollIntoView({behavior:'smooth',block:'center'});}}var ds=document.querySelectorAll('details');for(var i=0;i<ds.length;i++){try{ds[i].open=true;}catch(e){}}var m=document.getElementById('msg2');if(m){m.textContent='⚠️ 方法一被网易风控拦截（如 8860），请改用下方方法二：先登录 music.163.com，再按说明复制 MUSIC_U 粘贴到输入框';m.className='msg err';}}try{new MutationObserver(function(){document.querySelectorAll('.msg').forEach(function(el){if(re.test(el.textContent||''))fire();});}).observe(document.body,{subtree:true,childList:true,characterData:true});}catch(e){}})();</script></body></html>`;
 // 二群登记页：由 INDEX_HTML 原样派生——只替换标题/版本标识，并给 4 个登记接口的请求体
