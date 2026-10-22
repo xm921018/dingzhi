@@ -441,7 +441,9 @@ def main():
         try:
             wb = client.workbench_info()
             if wb is not None:
-                metrics[str(acc.get("uid") or name)] = wb
+                m = dict(wb)
+                m["dur"] = dur_map.get(str(acc.get("song") or "")) or None  # 登记歌曲时长(秒)，进控制台「时长」列
+                metrics[str(acc.get("uid") or name)] = m
         except Exception:
             pass
         return name, cnt, secs, False
@@ -472,7 +474,9 @@ def main():
         try:
             wb = Client(acc["ck"]).workbench_info()
             if wb is not None:
-                metrics[str(acc.get("uid") or acc.get("name", "?"))] = wb
+                m = dict(wb)
+                m["dur"] = dur_map.get(str(acc.get("song") or "")) or None
+                metrics[str(acc.get("uid") or acc.get("name", "?"))] = m
         except Exception:
             pass
         time.sleep(random.uniform(1, 2))
