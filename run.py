@@ -148,7 +148,7 @@ class Client:
             try:
                 r = self._weapi_post(f"{BASE_URL}/weapi/v3/song/detail", {"c": json.dumps([{"id": x} for x in batch])})
                 for t in (r.get("songs") or []):
-                    out[t.get("id")] = (t.get("dt") or 0) // 1000
+                    out[str(t.get("id"))] = (t.get("dt") or 0) // 1000
             except Exception:
                 pass
             time.sleep(random.uniform(0.5, 1.5))
@@ -159,7 +159,7 @@ class Client:
         try:
             r = self._weapi_post(f"{BASE_URL}/weapi/v6/playlist/detail", {"id": pid, "n": limit})
             pl = r.get("playlist") or {}
-            ids = [t.get("id") for t in (pl.get("trackIds") or [])[:limit] if t.get("id")]
+            ids = [str(t.get("id")) for t in (pl.get("trackIds") or [])[:limit] if t.get("id")]
             if not ids:
                 return []
             durs = self.song_detail(ids)
@@ -341,7 +341,7 @@ def main():
     def process_account(acc):
         """单个账号的完整播放流程（供线程池并行调用，每号一个独立 Client）。"""
         name = acc.get("name", "?")
-        mine = acc.get("song")
+        mine = str(acc.get("song") or "")
         client = Client(acc["ck"])
         chk = client.login_by_cookie(acc["ck"], name)
         if chk is None:
