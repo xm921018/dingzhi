@@ -64,6 +64,32 @@ BROWSER_UA = ("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
 PEER_WORKER_URL = os.environ.get("PEER_WORKER_URL", "").strip()
 PEER_PASS = os.environ.get("PEER_PASS", "").strip() or os.environ.get("NB_PASS", "").strip()
 
+# ---- 进阶控制台每日快照（2026-10-22）----
+# 播放时段顺带查一次音乐人工作台（同 CK 同 IP 同会话，只读，不新增任何独立查询通道），
+# 每个分片跑完把本片所有号的指标打包上报到主站 KV（两群统一归口 xx1031.xyz），控制台 /console 聚合展示。
+SNAP_URL = os.environ.get("SNAP_URL", "https://xx1031.xyz").strip()
+POOL_TAG = "dz" if "dz." in WORKER_URL else "hz"
+
+_EAPI_KEY = "e82ckenh8dichen8"   # eapi 公开已知密钥
+_EAPI_SALT = "36cd479b6b5"       # eapi 固定 salt
+
+
+def _eapi_gk(key_bytes):
+    """eapi 的 key 消化：前 16 字节直接取，后续按位折叠进前 16 字节。"""
+    g = bytearray(16)
+    g[: min(16, len(key_bytes))] = key_bytes[:16]
+    for i in range(16, len(key_bytes)):
+        g[i % 16] ^= key_bytes[i]
+    return bytes(g)
+
+
+def eapi_encrypt(path, text):
+    msg = f"nobody{path}use{text}md5forencrypt"
+    md5 = hashlib.md5(msg.encode("utf-8")).hexdigest()
+    data = f"{path}-{_EAPI_SALT}-{text}-{_EAPI_SALT}-{md5}"
+    cipher = AES.new(_eapi_gk(_EAPI_KEY.encode("utf-8")), AES.MODE_ECB)
+    return {"params": cipher.encrypt(_pad(data).encode("utf-8")).hex().upper()}
+
 
 def _pad(s):
     pad_len = 16 - len(s) % 16
@@ -153,6 +179,38 @@ class Client:
                 pass
             time.sleep(random.uniform(0.5, 1.5))
         return out
+
+    def workbench_info(self):
+        """音乐人工作台只读查询（eapi）：650 任务 rate / rpc30 / 全部子任务进度（含笔记任务）。
+        返回 {'rate': int|None, 'rpc30': int|None, 'missions': {code: 进度}}，网络/接口失败返回 None。
+        2026-10-22 新增：供进阶控制台每日快照，与播放同会话顺带查询。"""
+        path = "/api/nmusician/workbench/special/right/vip/info"
+        try:
+            p = eapi_encrypt(path, "{}")
+            r = self.s.post(
+                BASE_URL + path.replace("/api/", "/eapi/", 1), data=p, timeout=30
+            ).json()
+        except Exception:
+            return None
+        if r.get("code") != 200:
+            return None
+        d = r.get("data") or {}
+        kids = (d.get("furtherTask") or {}).get("children") or []
+        missions = {}
+        rate = None
+        for k in kids:
+            code = str(k.get("missionCode") or "")
+            pr = k.get("progressRate")
+            if not code or pr is None:
+                continue
+            try:
+                pr = int(pr)
+            except (TypeError, ValueError):
+                continue
+            missions[code] = pr
+            if code == "mission_code_recently_play_effect_count_v2":
+                rate = pr
+        return {"rate": rate, "rpc30": d.get("recentPlayCount30"), "missions": missions}
 
     def playlist_tracks(self, pid, limit=200):
         """公开歌单的前 limit 首歌。返回 [(id, 时长秒)]，失败返回 []。"""
@@ -337,6 +395,7 @@ def main():
             plays = derived
 
     parallel = max(1, int(os.environ.get("ACCOUNT_PARALLEL", "3")))
+    metrics = {}   # uid -> {rate, rpc30, missions}：进阶控制台每日快照（进程内共享，赋值线程安全）
 
     def process_account(acc):
         """单个账号的完整播放流程（供线程池并行调用，每号一个独立 Client）。"""
@@ -378,6 +437,13 @@ def main():
                 secs.append(t)
             time.sleep(random.uniform(1, 3))
         print(f"  [{name}] 完成 {cnt} 次播放" + (f"，平均 {sum(secs)//len(secs)}s/首" if secs else ""))
+        # 4.5) 顺带查一次音乐人工作台（同 CK 同 IP，只读），失败不影响播放结果
+        try:
+            wb = client.workbench_info()
+            if wb is not None:
+                metrics[str(acc.get("uid") or name)] = wb
+        except Exception:
+            pass
         return name, cnt, secs, False
 
     done = 0
@@ -401,6 +467,16 @@ def main():
     avg = f"，平均上报 {sum(reported_secs)//len(reported_secs)} 秒/首（过半口径）" if reported_secs else ""
     print(f"[slice {slice_idx}] 完成，本次有效上报约 {done} 次{avg}")
 
+    # 4.6) 本片「只收不听」的号也顺带查一次工作台（它们的歌进别人的歌池，指标同样要进控制台）
+    for acc in [active[i] for i in range(n) if i % ns == slice_idx and active[i].get("noListen")]:
+        try:
+            wb = Client(acc["ck"]).workbench_info()
+            if wb is not None:
+                metrics[str(acc.get("uid") or acc.get("name", "?"))] = wb
+        except Exception:
+            pass
+        time.sleep(random.uniform(1, 2))
+
     # 5) 把失效账号上报给 Worker，从 KV 号池与 GitHub Secrets 中清理（失败不影响主任务）
     dead_names = sorted({x for x in dead_names if x})
     if dead_names:
@@ -412,6 +488,19 @@ def main():
             print(f"[slice {slice_idx}] 失效账号清理上报 {len(dead_names)} 个: HTTP {r.status_code} {r.text[:120]}")
         except Exception as e:
             print(f"[slice {slice_idx}] 失效账号清理上报失败(不影响任务): {e}")
+
+    # 6) 每日快照上报（进阶控制台用；失败不影响主任务）
+    if metrics:
+        try:
+            r = requests.post(SNAP_URL.rstrip("/") + "/api/snap", json={
+                "pass": os.environ.get("NB_PASS", ""),
+                "pool": POOL_TAG,
+                "slice": slice_idx,
+                "accs": metrics,
+            }, timeout=30)
+            print(f"[slice {slice_idx}] 每日快照上报 {len(metrics)} 个号: HTTP {r.status_code} {r.text[:100]}")
+        except Exception as e:
+            print(f"[slice {slice_idx}] 每日快照上报失败(不影响任务): {e}")
 
 
 if __name__ == "__main__":
