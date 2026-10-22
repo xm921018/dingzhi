@@ -1543,25 +1543,35 @@ async function pruneExpired() {
   await pushPool(kept);
   return { master: kept, count: dead.length };
 }
+async function gzipU8(u8) {
+  // 2026-10-22：分片 JSON 先 gzip 再 base64。此前直接 base64 JSON，分片 45000 字符
+  // 封装后约 1.78 倍膨胀到 ~80KB，超过 GitHub Secret 48KB 上限 → 最大那片恒被 422
+  // 拒绝（且空槽都成功，表面看 resync 正常），老账号变更自 10-18 起没进过 Actions 号池。
+  const cs = new CompressionStream('gzip');
+  const stream = new Blob([u8]).stream().pipeThrough(cs);
+  return new Uint8Array(await new Response(stream).arrayBuffer());
+}
+
 async function pushPool(entries) {
+  const CHUNK_MAX = 40000;  // 原始 JSON 字符数；实测 gzip≈0.52 字节/字符（CK hex 不可压缩），b64+sealed 后 ~37KB < 48KB
+  const SLOT_N = 12;        // 槽位 NB_POOL_1..12（读取端 run.py / run.yml plan 已同步扩到 12）；12×4万字符 ≈ 550 号容量 > 500 上限
   const chunks = [];
   let cur = [];
   let size = 0;
   for (const e of entries) {
     const s = JSON.stringify(e).length + 1;
-    if (size + s > 45000 && cur.length) { chunks.push(cur); cur = []; size = 0; }
+    if (size + s > CHUNK_MAX && cur.length) { chunks.push(cur); cur = []; size = 0; }
     cur.push(e); size += s;
   }
   if (cur.length) chunks.push(cur);
-  // Secrets 只有 NB_POOL_1..5 五个槽，超出的分片此前被静默丢弃（2026-10-13 加告警）
-  if (chunks.length > 5) {
-    const dropped = chunks.slice(5).reduce((n, c) => n + c.length, 0);
-    console.error(`号池 ${entries.length} 条超出 5 片 Secrets 容量，超出的 ${dropped} 条未写入，请扩容或清理！`);
+  if (chunks.length > SLOT_N) {
+    const dropped = chunks.slice(SLOT_N).reduce((n, c) => n + c.length, 0);
+    console.error(`号池 ${entries.length} 条超出 ${SLOT_N} 片 Secrets 容量，超出的 ${dropped} 条未写入，请扩容或清理！`);
   }
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < SLOT_N; i++) {
     const name = `NB_POOL_${i + 1}`;
-    if (i < chunks.length) await ghPutSecret(name, b64enc(utf8(JSON.stringify(chunks[i]))));
-    else await ghPutSecret(name, b64enc(utf8('[]')));
+    if (i < chunks.length) await ghPutSecret(name, b64enc(await gzipU8(utf8(JSON.stringify(chunks[i])))));
+    else await ghPutSecret(name, b64enc(await gzipU8(utf8('[]'))));
   }
 }
 
